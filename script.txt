@@ -1,0 +1,77 @@
+# Define an array of month abbreviations
+:local montharray {"jan";"feb";"mar";"apr";"may";"jun";"jul";"aug";"sep";"oct";"nov";"dec"};
+
+# Function to convert date string to numeric format YYYYMMDD
+:local dateint do={
+    :local d $1; # Get the input date
+    :local month [:pick $d 0 3]; # Extract the month part
+    :local days [:pick $d 4 6]; # Extract the day part
+    :local year [:pick $d 7 11]; # Extract the year part
+    :local monthint ([:find {"jan";"feb";"mar";"apr";"may";"jun";"jul";"aug";"sep";"oct";"nov";"dec"} $month]); # Find the month index
+    :local month ($monthint + 1); # Adjust month to 1-based index
+    :if ([:len "$month"] = 1) do={
+        :local zero "0"; # Add leading zero for single-digit months
+        :set month "$zero$month";
+    }
+    :return [:tonum ("$year$month$days")]; # Return numeric date
+}
+
+# Get the current system date and convert to numeric format
+:local date [/system clock get date];
+:log info ("System date: $date");
+:local today [$dateint $date];
+:log info ("Today's date in numeric format: $today");
+
+# Iterate over all PPP secrets (users)
+:foreach user in=[/ppp secret find] do={
+    :local comment [/ppp secret get $user comment]; # Get the comment (expiration date)
+    :local username [/ppp secret get $user name]; # Get the username
+    :if ([:len $comment] >= 11) do={
+        :local expd [:pick $comment 0 11]; # Extract expiration date from comment
+        :local month [:pick $expd 0 3]; # Extract month part
+        :local day [:pick $expd 4 6]; # Extract day part
+        :local year [:pick $expd 7 11]; # Extract year part
+        :local monthIndex [:find $montharray $month]; # Find month index
+        :if (($monthIndex >= 0) && ([:len $day] = 2) && ([:len $year] = 4) && ([:tonum $day] > 0) && ([:tonum $day] <= 31)) do={
+            :log info ("Checking user " . $username . " with expiration date " . $expd);
+			
+			# Convert expiration date to numeric format
+            :local expMonth ($monthIndex + 1)
+            :if ($expMonth < 10) do={
+                :set expMonth ("0" . $expMonth)
+            }
+            :local expdNumeric [$dateint d=($year . "-" . $expMonth . "-" . $day)]
+			
+            :local expdNumeric [$dateint $expd]; # Convert expiration date to numeric format
+            :if ($today >= $expdNumeric) do={
+                :local isDisabled [/ppp secret get $user disabled];
+                :if ($isDisabled = false) do={
+                    :log info ("User " . $username . " has expired and is not disabled. Disabling...");
+                    /ppp secret set $user disabled=yes;
+
+                    :local activeId [/ppp active find where name=$username];
+                    :if ([:len $activeId] > 0) do={
+                        /ppp active remove $activeId;
+                        :log info ("PPP active user " . $username . " removed.");
+                    } else={
+                        :log info ("PPP active user " . $username . " not found.");
+                    }
+                } else={
+                    :log info ("User " . $username . " has expired and is already disabled. No action needed.");
+                }
+            } else={
+                :local isDisabled [/ppp secret get $user disabled];
+                :if ($isDisabled) do={
+                    :log info ("User " . $username . " is disabled but not expired. Re-enabling...");
+                    /ppp secret set $user disabled=no;
+                } else={
+                    :log info ("User " . $username . " is enabled and not expired. No action needed.");
+                }
+            }
+        } else={
+            :log info ("User " . $username . " does not have a valid expiration date format in the comment.");
+        }
+    } else={
+        :log info ("User " . $username . " does not have a valid expiration date.");
+    }
+}
